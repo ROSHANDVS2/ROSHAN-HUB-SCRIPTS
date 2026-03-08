@@ -1,0 +1,1656 @@
+--[[
+╔══════════════════════════════════════════════════════════════════╗
+║   ROSHAN HUB — GRACE ELITE  V 2 . 0  [REWRITE COMPLETO]       ║
+║   © 2026  ROSHAN_DEV  &  AANN_DEV  — ALL RIGHTS RESERVED      ║
+║   Sin dependencias · Mobile + PC · Multi-executor optimizado   ║
+║   Solara · Delta · Velocity · Wave · Arceus X · Fluxus         ║
+╠══════════════════════════════════════════════════════════════════╣
+║   KEYS: ROSHAN-V1 | ROSHAN_DEV | AANN_DEV | ROSHAN2026        ║
+║         GRACE2025 | SOULBODY2026 | GRACE-ELITE-V1              ║
+╚══════════════════════════════════════════════════════════════════╝
+
+  FIXES V2:
+  - UI rediseñada para MOBILE (botones grandes, scroll mejorado)
+  - Sin lag: throttle global + batch processing optimizado
+  - Reprieve farm reescrito (sin freeze en ningún executor)
+  - Goober Clicker auto-click integrado
+  - Auto-Bricks (farm de bricks abriendo puertas)
+  - WOED Goober buff selector visual
+  - Auto Trait / Auto Key unlock info
+  - Item Skin unlocker via RemoteEvent fire
+  - Anti-entidades mejorado con detección por HRP proximity
+  - ESP liviano (solo texto, sin BillboardGuis pesados en mobile)
+  - Potato Mode agresivo para mobile
+  - Cleanup total al cerrar
+]]
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §0  ANTI-DUPLICATE + KILL
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+if _G.__ROSH_V2 then
+    pcall(_G.__ROSH_V2_KILL)
+    task.wait(0.3)
+end
+_G.__ROSH_V2 = true
+_G.__ROSH_V2_KILL = function() end -- se define al final
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §1  SERVICIOS
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+local PL   = game:GetService("Players")
+local RS   = game:GetService("RunService")
+local REP  = game:GetService("ReplicatedStorage")
+local LIG  = game:GetService("Lighting")
+local TW   = game:GetService("TweenService")
+local UIS  = game:GetService("UserInputService")
+local GUI  = game:GetService("GuiService")
+local TS   = game:GetService("TeleportService")
+local LP   = PL.LocalPlayer
+
+-- VirtualInputManager (opcional, algunos executors no lo tienen)
+local VIM
+pcall(function() VIM = game:GetService("VirtualInputManager") end)
+
+-- Detección mobile
+local isMobile = UIS.TouchEnabled and not UIS.MouseEnabled
+
+-- GUI parent seguro
+local function safeGui()
+    local p
+    if gethui then pcall(function() p = gethui() end) end
+    if not p   then pcall(function() p = game:GetService("CoreGui") end) end
+    return p or LP.PlayerGui
+end
+
+-- Helpers básicos
+local function fti(a,b,s) if firetouchinterest then pcall(function() firetouchinterest(a,b,s) end) end end
+local function fpp(p)     if fireproximityprompt then pcall(function() fireproximityprompt(p) end) end end
+local function fre(ev,...) if ev and ev.FireServer then pcall(function() ev:FireServer(...) end) end end
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §2  THROTTLE GLOBAL (anti-lag central)
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+local _TH = {}
+local function th(k, interval, fn)
+    local now = tick()
+    if not _TH[k] or (now - _TH[k]) >= interval then
+        _TH[k] = now
+        pcall(fn)
+    end
+end
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §3  HEARTBEAT MANAGER
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+local HB = {}
+local function hOn(k, fn)
+    if HB[k] then pcall(function() HB[k]:Disconnect() end) end
+    HB[k] = RS.Heartbeat:Connect(fn)
+end
+local function hOff(k)
+    if HB[k] then
+        pcall(function() HB[k]:Disconnect() end)
+        HB[k] = nil
+    end
+end
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §4  KEYS VÁLIDAS
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+local VALID = {
+    ["ROSHAN-V1"]=true, ["ROSHAN_DEV"]=true, ["AANN_DEV"]=true,
+    ["ROSHAN2026"]=true, ["GRACE2025"]=true, ["SOULBODY2026"]=true,
+    ["GRACE-ELITE-V1"]=true, ["ROSHAN-HUB"]=true, ["ROSHAN-V2"]=true,
+}
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §5  UTILIDADES DEL JUEGO
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+local function HRP()
+    local c = LP.Character
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+local function HUM()
+    local c = LP.Character
+    return c and c:FindFirstChildOfClass("Humanoid")
+end
+-- Obtener rooms ordenadas
+local function getRooms()
+    local rf = workspace:FindFirstChild("Rooms")
+    if not rf then return {} end
+    local t = {}
+    for _, m in ipairs(rf:GetChildren()) do
+        local n = tonumber(m.Name)
+        if n then table.insert(t, {m=m, n=n}) end
+    end
+    table.sort(t, function(a, b) return a.n < b.n end)
+    return t
+end
+-- Tween helper
+local function tween(obj, props, dur, style, dir)
+    TW:Create(obj, TweenInfo.new(dur or 0.2,
+        style or Enum.EasingStyle.Quad,
+        dir   or Enum.EasingDirection.Out), props):Play()
+end
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §6  ENTIDADES CONOCIDAS (SOB 2026)
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- Todas en minúsculas para comparación rápida
+local ENT_ALL = {}
+for _, n in ipairs({
+    "carnation","slight","slugfish","heed","elkman","sorrow","dozer","goatman",
+    "litany","doppel","doombringer","joey","kookoo","rue","drain","mime","ire",
+    "zomber","ambush","clef","screech","covet","craven","stem","guille","fool",
+    "tragedy","flowerhead","flower head","snap","s.n.a.p","seesay","big one",
+    "chaos","clot","sin","shame","tainted soil","taintedsoil","pihsrow","duk",
+    "epik duck","monster","entity","death","ghost","enemy","regretosis",
+}) do ENT_ALL[n] = true end
+
+-- Solo las críticas / instakill
+local ENT_CRIT = {}
+for _, n in ipairs({
+    "goatman","shame","sin","tragedy","chaos","snap","s.n.a.p","seesay",
+    "fool","big one","sorrow","covet","craven","stem","guille","ambush",
+    "clef","screech","elkman","litany","flowerhead","flower head",
+    "tainted soil","taintedsoil","clot","carnation",
+}) do ENT_CRIT[n] = true end
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §7  PALETA DE COLORES
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+local C = {
+    bg    = Color3.fromRGB(8,  4,  18),
+    bg2   = Color3.fromRGB(13, 7,  28),
+    bg3   = Color3.fromRGB(20, 10, 40),
+    acc   = Color3.fromRGB(168,38, 255),
+    acc2  = Color3.fromRGB(45, 185,255),
+    grn   = Color3.fromRGB(0,  220,100),
+    red   = Color3.fromRGB(255,50, 50),
+    org   = Color3.fromRGB(255,155,20),
+    wht   = Color3.fromRGB(230,220,255),
+    dim   = Color3.fromRGB(90, 70, 130),
+    dim2  = Color3.fromRGB(50, 38, 75),
+    yel   = Color3.fromRGB(255,210,50),
+}
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §8  HELPERS UI (mínimos, sin overhead)
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+local function newF(sz, pos, bg, tr, parent)
+    local f = Instance.new("Frame")
+    f.Size = sz; f.Position = pos
+    f.BackgroundColor3 = bg or C.bg
+    f.BackgroundTransparency = tr or 0
+    f.BorderSizePixel = 0
+    if parent then f.Parent = parent end
+    return f
+end
+local function corner(r, p) local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r or 8); c.Parent = p end
+local function stroke(col, th2, tr, p)
+    local s = Instance.new("UIStroke"); s.Color = col or C.acc
+    s.Thickness = th2 or 1; s.Transparency = tr or 0.2; s.Parent = p
+end
+local function label(txt, sz, col, font, xa, parent)
+    local l = Instance.new("TextLabel")
+    l.Text = txt; l.TextSize = sz or 12
+    l.TextColor3 = col or C.wht
+    l.Font = font or Enum.Font.GothamBold
+    l.BackgroundTransparency = 1; l.BorderSizePixel = 0
+    l.TextXAlignment = xa or Enum.TextXAlignment.Left
+    l.TextScaled = false; l.TextWrapped = true
+    if parent then l.Parent = parent end
+    return l
+end
+local function gradient(c1, c2, rot, parent)
+    local g = Instance.new("UIGradient")
+    g.Color = ColorSequence.new(c1, c2); g.Rotation = rot or 0; g.Parent = parent
+end
+
+-- ScreenGui raíz
+do
+    local old = safeGui():FindFirstChild("__ROSH_V2")
+    if old then pcall(function() old:Destroy() end) end
+end
+local SG = Instance.new("ScreenGui")
+SG.Name = "__ROSH_V2"
+SG.ResetOnSpawn = false
+SG.IgnoreGuiInset = true
+SG.ZIndexBehavior = Enum.ZIndexBehavior.Global
+pcall(function() SG.Parent = safeGui() end)
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §9  PANTALLA DE CARGA (liviana)
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+local loadDone = false
+local function showLoader()
+    local bg = newF(UDim2.new(1,0,1,0), UDim2.new(0,0,0,0), C.bg, 0, SG)
+    bg.ZIndex = 500
+    gradient(Color3.fromRGB(5,2,14), Color3.fromRGB(12,5,26), 135, bg)
+
+    local logo = label("ROSHAN HUB", 46, C.wht, Enum.Font.GothamBold, Enum.TextXAlignment.Center, bg)
+    logo.Size = UDim2.new(0,360,0,54); logo.Position = UDim2.new(0.5,-180,0.5,-100); logo.ZIndex = 502
+    gradient(Color3.fromRGB(200,40,255), Color3.fromRGB(40,185,255), 0, logo)
+
+    local sub = label("GRACE ELITE  V2.0", 12, C.dim, Enum.Font.Code, Enum.TextXAlignment.Center, bg)
+    sub.Size = UDim2.new(0,360,0,18); sub.Position = UDim2.new(0.5,-180,0.5,-38); sub.ZIndex = 502
+
+    local barBg = newF(UDim2.new(0,260,0,5), UDim2.new(0.5,-130,0.5,6), C.bg3, 0, bg)
+    barBg.ZIndex = 502; corner(3, barBg)
+    local bar = newF(UDim2.new(0,0,1,0), UDim2.new(0,0,0,0), C.acc, 0, barBg)
+    bar.ZIndex = 503; corner(3, bar)
+    gradient(C.acc, C.acc2, 0, bar)
+
+    local pct = label("Iniciando...", 10, C.dim, Enum.Font.Code, Enum.TextXAlignment.Center, bg)
+    pct.Size = UDim2.new(0,260,0,14); pct.Position = UDim2.new(0.5,-130,0.5,18); pct.ZIndex = 502
+
+    local steps = {
+        "Cargando servicios...", "Entidades SOB 2026 (40+)...",
+        "Optimizando para mobile...", "Reprieve Farm V2...",
+        "Goober Clicker + WOED...", "Listos todos los módulos!", "ROSHAN HUB V2 listo ✓"
+    }
+    task.spawn(function()
+        for i, s in ipairs(steps) do
+            pct.Text = s
+            tween(bar, {Size = UDim2.new(i/#steps, 0, 1, 0)}, 0.28, Enum.EasingStyle.Quart)
+            task.wait(0.28)
+        end
+        task.wait(0.25)
+        tween(bg, {BackgroundTransparency=1}, 0.4)
+        for _, d in ipairs(bg:GetDescendants()) do pcall(function()
+            if d:IsA("Frame") then tween(d,{BackgroundTransparency=1},0.4)
+            elseif d:IsA("TextLabel") then tween(d,{TextTransparency=1},0.4) end
+        end) end
+        task.wait(0.45); pcall(function() bg:Destroy() end)
+        loadDone = true
+    end)
+end
+showLoader()
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §10  KEY SCREEN
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+local keyOk = false
+pcall(function()
+    if readfile then
+        local v = readfile("rosh_v2.txt"):gsub("%s","")
+        if VALID[v] then keyOk = true end
+    end
+end)
+
+repeat task.wait(0.05) until loadDone
+
+if not keyOk then
+    local ov = newF(UDim2.new(1,0,1,0), UDim2.new(0,0,0,0), C.bg, 0, SG); ov.ZIndex = 400
+    gradient(Color3.fromRGB(5,2,14), Color3.fromRGB(12,5,26), 135, ov)
+
+    local card = newF(UDim2.new(0,300,0,240), UDim2.new(0.5,-150,0.5,-120), C.bg2, 0, ov)
+    card.ZIndex = 401; corner(14, card); stroke(C.acc, 1.5, 0.15, card)
+
+    local kt = label("ROSHAN HUB V2", 28, C.wht, Enum.Font.GothamBold, Enum.TextXAlignment.Center, card)
+    kt.Size = UDim2.new(1,0,0,40); kt.Position = UDim2.new(0,0,0,14); kt.ZIndex = 402
+    gradient(Color3.fromRGB(200,40,255), Color3.fromRGB(40,185,255), 0, kt)
+
+    local ks = label("Ingresá tu key para continuar", 10, C.dim, Enum.Font.Code, Enum.TextXAlignment.Center, card)
+    ks.Size = UDim2.new(1,0,0,14); ks.Position = UDim2.new(0,0,0,58); ks.ZIndex = 402
+
+    local kh = label("ROSHAN-V1 · ROSHAN_DEV · AANN_DEV · ROSHAN2026", 8, C.dim2, Enum.Font.Code, Enum.TextXAlignment.Center, card)
+    kh.Size = UDim2.new(1,-16,0,12); kh.Position = UDim2.new(0,8,0,76); kh.ZIndex = 402
+
+    local ib = newF(UDim2.new(1,-28,0,42), UDim2.new(0,14,0,96), C.bg3, 0, card)
+    ib.ZIndex = 402; corner(8, ib); stroke(C.acc, 1, 0.4, ib)
+
+    local inp = Instance.new("TextBox")
+    inp.Size = UDim2.new(1,-14,1,0); inp.Position = UDim2.new(0,7,0,0)
+    inp.BackgroundTransparency = 1; inp.Text = ""
+    inp.PlaceholderText = "Tu key aquí..."; inp.Font = Enum.Font.Code
+    inp.TextSize = 13; inp.TextColor3 = C.wht; inp.PlaceholderColor3 = C.dim
+    inp.ClearTextOnFocus = false; inp.ZIndex = 403; inp.Parent = ib
+
+    local errL = label("", 9, C.red, Enum.Font.Code, Enum.TextXAlignment.Center, card)
+    errL.Size = UDim2.new(1,0,0,13); errL.Position = UDim2.new(0,0,0,146); errL.ZIndex = 402
+
+    local cb = Instance.new("TextButton")
+    cb.Size = UDim2.new(1,-28,0,38); cb.Position = UDim2.new(0,14,0,162)
+    cb.BackgroundColor3 = C.acc; cb.Text = "CONFIRMAR KEY"
+    cb.Font = Enum.Font.GothamBold; cb.TextSize = 13
+    cb.TextColor3 = Color3.new(1,1,1); cb.BorderSizePixel = 0
+    cb.AutoButtonColor = false; cb.ZIndex = 402; cb.Parent = card; corner(8, cb)
+    gradient(Color3.fromRGB(195,40,255), Color3.fromRGB(75,28,215), 0, cb)
+
+    local function tryKey()
+        local k = inp.Text:gsub("%s","")
+        if VALID[k] then
+            pcall(function() if writefile then writefile("rosh_v2.txt", k) end end)
+            tween(ov, {BackgroundTransparency=1}, 0.35)
+            for _, d in ipairs(ov:GetDescendants()) do pcall(function()
+                if d:IsA("Frame") then tween(d,{BackgroundTransparency=1},0.35)
+                elseif d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then tween(d,{TextTransparency=1},0.35) end
+            end) end
+            task.wait(0.4); pcall(function() ov:Destroy() end); keyOk = true
+        else
+            errL.Text = "❌ Key inválida."
+            tween(ib, {BackgroundColor3=Color3.fromRGB(55,5,5)}, 0.12)
+            task.wait(0.4); tween(ib, {BackgroundColor3=C.bg3}, 0.25)
+        end
+    end
+    cb.MouseButton1Click:Connect(tryKey)
+    inp.FocusLost:Connect(function(ep) if ep then tryKey() end end)
+    repeat task.wait(0.1) until keyOk
+end
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §11  SISTEMA DE NOTIFICACIONES (liviano)
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+local NQ = {}; local NB = false
+local function notif(title, msg, col, dur)
+    table.insert(NQ, {t=title, m=msg, c=col or C.acc, d=dur or 3.5})
+    if NB then return end; NB = true
+    task.spawn(function()
+        while #NQ > 0 do
+            local n = table.remove(NQ, 1)
+            pcall(function()
+                local nf = newF(UDim2.new(0,240,0,54), UDim2.new(1,10,1,-64), C.bg2, 0, SG)
+                nf.ZIndex = 300; corner(8, nf); stroke(n.c, 1.2, 0.2, nf)
+                local tl = label(n.t, 10, n.c, Enum.Font.GothamBold, Enum.TextXAlignment.Left, nf)
+                tl.Size = UDim2.new(1,-8,0,18); tl.Position = UDim2.new(0,6,0,4); tl.ZIndex = 301
+                local ml = label(n.m, 8, C.dim, Enum.Font.Code, Enum.TextXAlignment.Left, nf)
+                ml.Size = UDim2.new(1,-8,0,26); ml.Position = UDim2.new(0,6,0,22); ml.ZIndex = 301
+                tween(nf, {Position=UDim2.new(1,-248,1,-64)}, 0.22)
+                task.wait(n.d)
+                tween(nf, {Position=UDim2.new(1,10,1,-64)}, 0.22)
+                task.wait(0.25); pcall(function() nf:Destroy() end)
+            end)
+            task.wait(0.08)
+        end; NB = false
+    end)
+end
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §12  VENTANA PRINCIPAL
+--        Responsive: 380px mobile, 500px PC
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+local WW = isMobile and 370 or 500
+local WH = isMobile and 480 or 540
+local SBW = isMobile and 110 or 130  -- sidebar width
+
+-- Limpiar instancia anterior
+local oldWin = SG:FindFirstChild("__MainWin")
+if oldWin then pcall(function() oldWin:Destroy() end) end
+
+local Win = newF(
+    UDim2.new(0,WW,0,WH),
+    UDim2.new(0.5,-WW/2, 0.5,-WH/2),
+    C.bg, 0, SG
+)
+Win.Name = "__MainWin"; Win.ZIndex = 10; Win.ClipsDescendants = true
+corner(12, Win); stroke(C.acc, 1.5, 0.15, Win)
+
+-- Borde animado
+task.spawn(function()
+    local s = Win:FindFirstChildOfClass("UIStroke")
+    while s and s.Parent do
+        tween(s, {Color=C.acc2}, 1.8); task.wait(1.8)
+        tween(s, {Color=C.acc},  1.8); task.wait(1.8)
+    end
+end)
+gradient(Color3.fromRGB(7,3,17), Color3.fromRGB(11,5,25), 135, Win)
+
+-- ─── SIDEBAR ─────────────────────────
+local SIDEBAR = newF(UDim2.new(0,SBW,1,0), UDim2.new(0,0,0,0), C.bg2, 0, Win)
+SIDEBAR.ZIndex = 11
+-- línea separadora derecha
+newF(UDim2.new(0,1,1,0), UDim2.new(1,0,0,0), C.acc, 0.65, SIDEBAR).ZIndex = 12
+
+-- Logo sidebar
+local sLogo = label("ROSHAN", isMobile and 15 or 17, C.wht, Enum.Font.GothamBold, Enum.TextXAlignment.Center, SIDEBAR)
+sLogo.Size = UDim2.new(1,0,0,22); sLogo.Position = UDim2.new(0,0,0,14); sLogo.ZIndex = 12
+gradient(Color3.fromRGB(200,40,255), Color3.fromRGB(40,185,255), 0, sLogo)
+
+local sVer = label("HUB V2.0", 8, C.dim, Enum.Font.Code, Enum.TextXAlignment.Center, SIDEBAR)
+sVer.Size = UDim2.new(1,0,0,11); sVer.Position = UDim2.new(0,0,0,38); sVer.ZIndex = 12
+
+newF(UDim2.new(1,-16,0,1), UDim2.new(0,8,0,55), C.acc, 0.65, SIDEBAR).ZIndex = 12
+
+-- Dot activo (parpadeante)
+local sDot = newF(UDim2.new(0,7,0,7), UDim2.new(0,10,1,-18), C.grn, 0, SIDEBAR)
+sDot.ZIndex = 12; corner(4, sDot)
+task.spawn(function()
+    while sDot and sDot.Parent do
+        tween(sDot, {BackgroundTransparency=0.7}, 0.5); task.wait(0.5)
+        tween(sDot, {BackgroundTransparency=0},   0.5); task.wait(0.5)
+    end
+end)
+local sSt = label("ACTIVO", 7, C.grn, Enum.Font.Code, Enum.TextXAlignment.Left, SIDEBAR)
+sSt.Size = UDim2.new(1,-20,0,11); sSt.Position = UDim2.new(0,20,1,-20); sSt.ZIndex = 12
+
+-- ─── CONTENT PANEL ───────────────────
+local CONTENT = newF(UDim2.new(1,-SBW-1,1,0), UDim2.new(0,SBW+1,0,0), C.bg, 0, Win)
+CONTENT.ZIndex = 11
+
+-- Header
+local THEAD = newF(UDim2.new(1,0,0,38), UDim2.new(0,0,0,0), C.bg2, 0, CONTENT)
+THEAD.ZIndex = 12
+newF(UDim2.new(1,0,0,1), UDim2.new(0,0,1,-1), C.acc, 0.65, THEAD).ZIndex = 13
+
+local tabTitle = label("AUTO FARM", isMobile and 11 or 12, C.wht, Enum.Font.GothamBold, Enum.TextXAlignment.Left, THEAD)
+tabTitle.Size = UDim2.new(1,-44,1,0); tabTitle.Position = UDim2.new(0,10,0,0); tabTitle.ZIndex = 13
+
+-- Botón cerrar
+local xBtn = Instance.new("TextButton")
+xBtn.Size = UDim2.new(0,26,0,26); xBtn.Position = UDim2.new(1,-33,0.5,-13)
+xBtn.BackgroundColor3 = Color3.fromRGB(150,18,18)
+xBtn.Text = "✕"; xBtn.Font = Enum.Font.GothamBold
+xBtn.TextSize = 12; xBtn.TextColor3 = C.wht
+xBtn.BorderSizePixel = 0; xBtn.AutoButtonColor = false
+xBtn.ZIndex = 13; xBtn.Parent = THEAD; corner(5, xBtn)
+
+local hubVis = true
+xBtn.MouseButton1Click:Connect(function()
+    hubVis = false
+    tween(Win, {Size=UDim2.new(0,0,0,0)}, 0.22)
+    task.wait(0.24); Win.Visible = false
+end)
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §13  BOTÓN FLOTANTE (FAB) + DRAG
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+local fabSize = isMobile and 52 or 44
+local fabPos  = isMobile and UDim2.new(0,6,0.5,-26) or UDim2.new(0,6,0.5,-22)
+
+local glowF = newF(UDim2.new(0,fabSize+10,0,fabSize+10),
+    UDim2.new(0,1,0.5,-(fabSize+10)/2), C.acc, 0.62, SG)
+glowF.ZIndex = 9; corner((fabSize+10)/2, glowF)
+
+local fab = Instance.new("ImageButton")
+fab.Size = UDim2.new(0,fabSize,0,fabSize)
+fab.Position = fabPos
+fab.BackgroundColor3 = C.bg2; fab.BorderSizePixel = 0; fab.ZIndex = 10
+fab.Image = "rbxassetid://89224486080849"
+fab.ImageColor3 = Color3.new(1,1,1); fab.ScaleType = Enum.ScaleType.Fit
+fab.Parent = SG; corner(fabSize/2, fab); stroke(C.acc, 2, 0.15, fab)
+
+-- Fallback texto si imagen no carga
+task.spawn(function()
+    task.wait(3); pcall(function()
+        if fab.ImageRectSize == Vector2.new(0,0) then
+            fab.Image = ""
+            local fl = label("R", isMobile and 22 or 18, C.acc, Enum.Font.GothamBold, Enum.TextXAlignment.Center, fab)
+            fl.Size = UDim2.new(1,0,1,0); fl.ZIndex = 11
+        end
+    end)
+end)
+
+-- Pulso glow
+task.spawn(function()
+    while glowF and glowF.Parent do
+        tween(glowF, {BackgroundTransparency=0.35, Size=UDim2.new(0,fabSize+16,0,fabSize+16)}, 0.65)
+        task.wait(0.65)
+        tween(glowF, {BackgroundTransparency=0.75, Size=UDim2.new(0,fabSize+6,0,fabSize+6)}, 0.65)
+        task.wait(0.65)
+    end
+end)
+
+-- Drag FAB
+do
+    local drag, ds, bs = false, nil, nil
+    fab.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then
+            drag = true; ds = i.Position; bs = fab.Position
+        end
+    end)
+    fab.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then drag = false end
+    end)
+    UIS.InputChanged:Connect(function(i)
+        if drag and (i.UserInputType == Enum.UserInputType.MouseMovement
+                  or i.UserInputType == Enum.UserInputType.Touch) then
+            local dv = i.Position - ds
+            fab.Position  = UDim2.new(bs.X.Scale, bs.X.Offset+dv.X, bs.Y.Scale, bs.Y.Offset+dv.Y)
+            glowF.Position = UDim2.new(bs.X.Scale, bs.X.Offset+dv.X-5, bs.Y.Scale, bs.Y.Offset+dv.Y-5)
+        end
+    end)
+end
+
+-- Toggle hub
+fab.MouseButton1Click:Connect(function()
+    hubVis = not hubVis
+    if hubVis then
+        Win.Visible = true; Win.Size = UDim2.new(0,0,0,0)
+        tween(Win, {Size=UDim2.new(0,WW,0,WH)}, 0.28, Enum.EasingStyle.Back)
+    else
+        tween(Win, {Size=UDim2.new(0,0,0,0)}, 0.2); task.wait(0.22); Win.Visible = false
+    end
+end)
+
+-- Hotkey H
+UIS.InputBegan:Connect(function(i, gp)
+    if not gp and i.KeyCode == Enum.KeyCode.H then
+        fab.MouseButton1Click:Fire()
+    end
+end)
+
+-- Drag ventana por header
+do
+    local drag, ds, ws = false, nil, nil
+    THEAD.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then
+            drag = true; ds = i.Position; ws = Win.Position
+        end
+    end)
+    THEAD.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then drag = false end
+    end)
+    UIS.InputChanged:Connect(function(i)
+        if drag and (i.UserInputType == Enum.UserInputType.MouseMovement
+                  or i.UserInputType == Enum.UserInputType.Touch) then
+            local dv = i.Position - ds
+            Win.Position = UDim2.new(ws.X.Scale, ws.X.Offset+dv.X, ws.Y.Scale, ws.Y.Offset+dv.Y)
+        end
+    end)
+end
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §14  SISTEMA DE TABS
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+local TABS = {
+    {name="AUTO FARM",   icon="⚡", col=C.acc},
+    {name="REPRIEVE",    icon="💎", col=C.grn},
+    {name="WOED/GOOBER", icon="🐾", col=C.yel},
+    {name="DEFENSA",     icon="🛡", col=C.red},
+    {name="VISUAL",      icon="👁", col=C.acc2},
+    {name="TELEPORT",    icon="📍", col=C.org},
+    {name="TRAITS/ITEMS",icon="✦",  col=C.yel},
+    {name="EXTRA",       icon="⚙",  col=C.dim},
+}
+
+local tabList = Instance.new("ScrollingFrame")
+tabList.Size = UDim2.new(1,0,1,-72); tabList.Position = UDim2.new(0,0,0,64)
+tabList.BackgroundTransparency = 1; tabList.BorderSizePixel = 0
+tabList.ScrollBarThickness = isMobile and 0 or 2
+tabList.ScrollBarImageColor3 = C.acc
+tabList.CanvasSize = UDim2.new(0,0,0,#TABS * (isMobile and 50 or 44))
+tabList.ZIndex = 12; tabList.Parent = SIDEBAR
+
+local tabBtns = {}; local pages = {}
+local btnH = isMobile and 48 or 42
+
+local function makePage()
+    local sf = Instance.new("ScrollingFrame")
+    sf.Size = UDim2.new(1,0,1,-40); sf.Position = UDim2.new(0,0,0,40)
+    sf.BackgroundTransparency = 1; sf.BorderSizePixel = 0
+    sf.ScrollBarThickness = isMobile and 3 or 2
+    sf.ScrollBarImageColor3 = C.acc
+    sf.CanvasSize = UDim2.new(0,0,0,0)
+    sf.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    sf.Visible = false; sf.ZIndex = 12; sf.Parent = CONTENT
+    local ll = Instance.new("UIListLayout")
+    ll.SortOrder = Enum.SortOrder.LayoutOrder; ll.Padding = UDim.new(0,3); ll.Parent = sf
+    local pp = Instance.new("UIPadding")
+    pp.PaddingLeft = UDim.new(0,7); pp.PaddingRight = UDim.new(0,7)
+    pp.PaddingTop = UDim.new(0,5); pp.Parent = sf
+    table.insert(pages, sf); return sf
+end
+
+for i, tab in ipairs(TABS) do
+    local btn2 = Instance.new("TextButton")
+    btn2.Size = UDim2.new(1,0,0,btnH); btn2.Position = UDim2.new(0,0,0,(i-1)*(btnH+2))
+    btn2.BackgroundColor3 = C.bg2; btn2.BackgroundTransparency = 1
+    btn2.Text = ""; btn2.BorderSizePixel = 0; btn2.AutoButtonColor = false
+    btn2.ZIndex = 13; btn2.Parent = tabList
+
+    local bar = newF(UDim2.new(0,3,0.65,0), UDim2.new(0,0,0.17,0), tab.col, 1, btn2)
+    bar.ZIndex = 14; corner(2, bar)
+    local ico = label(tab.icon, isMobile and 16 or 14, tab.col, Enum.Font.GothamBold, Enum.TextXAlignment.Center, btn2)
+    ico.Size = UDim2.new(0,26,1,0); ico.Position = UDim2.new(0,8,0,0); ico.ZIndex = 14
+    local nm = label(tab.name, isMobile and 7 or 7, C.dim, Enum.Font.GothamBold, Enum.TextXAlignment.Left, btn2)
+    nm.Size = UDim2.new(1,-38,1,0); nm.Position = UDim2.new(0,37,0,0); nm.ZIndex = 14
+
+    tabBtns[i] = {btn=btn2, bar=bar, nm=nm, ico=ico}
+    makePage()
+
+    btn2.MouseButton1Click:Connect(function()
+        for j, pg in ipairs(pages) do
+            pg.Visible = (j == i)
+            local tb = tabBtns[j]
+            if j == i then
+                tween(tb.btn, {BackgroundTransparency=0.85}, 0.12)
+                tb.btn.BackgroundColor3 = TABS[j].col
+                tween(tb.bar, {BackgroundTransparency=0}, 0.12)
+                tween(tb.nm,  {TextColor3=TABS[j].col}, 0.12)
+                tween(tb.ico, {TextColor3=TABS[j].col}, 0.12)
+                tabTitle.Text = TABS[j].name
+            else
+                tween(tabBtns[j].btn, {BackgroundTransparency=1}, 0.12)
+                tween(tabBtns[j].bar, {BackgroundTransparency=1}, 0.12)
+                tween(tabBtns[j].nm,  {TextColor3=C.dim}, 0.12)
+                tween(tabBtns[j].ico, {TextColor3=TABS[j].col}, 0.12)
+            end
+        end
+    end)
+end
+
+local P = pages
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §15  COMPONENTES DE PÁGINA
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+local rowH = isMobile and 40 or 34
+
+local function sec(pg, txt, col)
+    local r = newF(UDim2.new(1,0,0,20), UDim2.new(0,0,0,0), col or C.acc, 0.8, pg)
+    r.LayoutOrder = #pg:GetChildren(); corner(4, r)
+    local l = label("  "..txt:upper(), isMobile and 8 or 8, C.wht, Enum.Font.GothamBold, Enum.TextXAlignment.Left, r)
+    l.Size = UDim2.new(1,0,1,0); l.ZIndex = 13
+end
+
+local function info(pg, txt, col)
+    local r = newF(UDim2.new(1,0,0,14), UDim2.new(0,0,0,0), C.bg, 0.9, pg)
+    r.LayoutOrder = #pg:GetChildren()
+    local l = label(txt, isMobile and 7 or 7, col or C.dim, Enum.Font.Code, Enum.TextXAlignment.Left, r)
+    l.Size = UDim2.new(1,-6,1,0); l.Position = UDim2.new(0,3,0,0); l.ZIndex = 13
+end
+
+local function tog(pg, txt, def, cb)
+    local r = newF(UDim2.new(1,0,0,rowH), UDim2.new(0,0,0,0), C.bg3, 0, pg)
+    r.LayoutOrder = #pg:GetChildren(); corner(7, r)
+
+    local lbl = label(txt, isMobile and 9 or 9, C.wht, Enum.Font.Gotham, Enum.TextXAlignment.Left, r)
+    lbl.Size = UDim2.new(1,-48,1,0); lbl.Position = UDim2.new(0,8,0,0); lbl.ZIndex = 13
+
+    local pill = newF(UDim2.new(0,34,0,16), UDim2.new(1,-42,0.5,-8), C.bg, 0, r)
+    pill.ZIndex = 13; corner(8, pill)
+    local dot = newF(UDim2.new(0,12,0,12), UDim2.new(0,2,0.5,-6), C.dim, 0, pill)
+    dot.ZIndex = 14; corner(6, dot)
+
+    local st = def or false
+    local function setState(v, anim)
+        st = v; local t2 = anim and 0.16 or 0
+        if v then
+            tween(pill, {BackgroundColor3=C.acc}, t2)
+            tween(dot,  {Position=UDim2.new(1,-14,0.5,-6), BackgroundColor3=C.wht}, t2)
+        else
+            tween(pill, {BackgroundColor3=C.bg}, t2)
+            tween(dot,  {Position=UDim2.new(0,2,0.5,-6), BackgroundColor3=C.dim}, t2)
+        end
+        if cb then pcall(cb, v) end
+    end
+    if def then setState(true, false) end
+
+    local ca = Instance.new("TextButton"); ca.Size = UDim2.new(1,0,1,0)
+    ca.BackgroundTransparency = 1; ca.Text = ""; ca.ZIndex = 14; ca.Parent = r
+    ca.MouseButton1Click:Connect(function() setState(not st, true) end)
+
+    r.MouseEnter:Connect(function() tween(r,{BackgroundColor3=Color3.fromRGB(20,9,42)},0.1) end)
+    r.MouseLeave:Connect(function() tween(r,{BackgroundColor3=C.bg3},0.1) end)
+
+    return {get=function() return st end, set=setState}
+end
+
+local function btn(pg, txt, col, cb)
+    local r = Instance.new("TextButton")
+    r.Size = UDim2.new(1,0,0,rowH); r.LayoutOrder = #pg:GetChildren()
+    r.BackgroundColor3 = C.bg3; r.BorderSizePixel = 0
+    r.Text = txt; r.Font = Enum.Font.GothamBold
+    r.TextSize = isMobile and 10 or 9; r.TextColor3 = col or C.acc
+    r.AutoButtonColor = false; r.ZIndex = 12; r.Parent = pg
+    corner(7, r); stroke(col or C.acc, 1, 0.7, r)
+    r.MouseButton1Click:Connect(function()
+        tween(r,{BackgroundColor3=col or C.acc},0.07)
+        task.wait(0.1); tween(r,{BackgroundColor3=C.bg3},0.15)
+        if cb then pcall(cb) end
+    end)
+    r.MouseEnter:Connect(function() tween(r,{BackgroundColor3=Color3.fromRGB(20,9,42)},0.1) end)
+    r.MouseLeave:Connect(function() tween(r,{BackgroundColor3=C.bg3},0.1) end)
+end
+
+local function sld(pg, txt, mn, mx, def, suf, cb)
+    local rH = isMobile and 52 or 46
+    local r = newF(UDim2.new(1,0,0,rH), UDim2.new(0,0,0,0), C.bg3, 0, pg)
+    r.LayoutOrder = #pg:GetChildren(); corner(7, r)
+
+    local lbl2 = label(txt, isMobile and 9 or 8, C.wht, Enum.Font.Gotham, Enum.TextXAlignment.Left, r)
+    lbl2.Size = UDim2.new(0.6,0,0,16); lbl2.Position = UDim2.new(0,8,0,2); lbl2.ZIndex = 13
+
+    local vl = label(tostring(def)..(suf or ""), isMobile and 9 or 8, C.acc, Enum.Font.GothamBold, Enum.TextXAlignment.Right, r)
+    vl.Size = UDim2.new(0.4,-8,0,16); vl.Position = UDim2.new(0.6,0,0,2); vl.ZIndex = 13
+
+    local tr = newF(UDim2.new(1,-16,0,isMobile and 7 or 5), UDim2.new(0,8,0,isMobile and 30 or 28), C.bg, 0, r)
+    tr.ZIndex = 13; corner(3, tr)
+    local pct = (def-mn)/(mx-mn)
+    local fi = newF(UDim2.new(pct,0,1,0), UDim2.new(0,0,0,0), C.acc, 0, tr)
+    fi.ZIndex = 14; corner(3, fi); gradient(C.acc, C.acc2, 0, fi)
+    local th2 = newF(UDim2.new(0,isMobile and 14 or 12,0,isMobile and 14 or 12),
+        UDim2.new(pct,-7,0.5,-6), C.wht, 0, tr)
+    th2.ZIndex = 15; corner(7, th2)
+
+    local val = def; local sl2 = false
+    local function sv(v, fire)
+        val = math.clamp(math.floor(v+0.5), mn, mx)
+        local p2 = (val-mn)/(mx-mn)
+        tween(fi,  {Size=UDim2.new(p2,0,1,0)}, 0.04)
+        tween(th2, {Position=UDim2.new(p2,-7,0.5,-6)}, 0.04)
+        vl.Text = tostring(val)..(suf or "")
+        if fire and cb then pcall(cb, val) end
+    end
+
+    tr.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then sl2 = true end
+    end)
+    UIS.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then sl2 = false end
+    end)
+    UIS.InputChanged:Connect(function(i)
+        if sl2 and (i.UserInputType == Enum.UserInputType.MouseMovement
+                 or i.UserInputType == Enum.UserInputType.Touch) then
+            local tx = tr.AbsolutePosition.X
+            local tw3 = tr.AbsoluteSize.X
+            sv(mn + math.clamp(i.Position.X-tx, 0, tw3)/tw3*(mx-mn), true)
+        end
+    end)
+    r.MouseEnter:Connect(function() tween(r,{BackgroundColor3=Color3.fromRGB(20,9,42)},0.1) end)
+    r.MouseLeave:Connect(function() tween(r,{BackgroundColor3=C.bg3},0.1) end)
+    return {get=function() return val end}
+end
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §16  LÓGICA DE FEATURES
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+-- ── Kill genérico de entidades por nombre ──
+local function killByNames(names)
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") then
+            local nl = obj.Name:lower()
+            for _, n in ipairs(names) do
+                if nl == n:lower() then pcall(function() obj:Destroy() end); break end
+            end
+        end
+    end
+end
+
+-- ── Kill rápido por proximity con HRP ──
+local killRange = 80
+local function killNear()
+    local hrp = HRP(); if not hrp then return end
+    local myPos = hrp.Position
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") and ENT_ALL[obj.Name:lower()] then
+            local rp = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
+            if rp and (myPos - rp.Position).Magnitude <= killRange then
+                pcall(function() obj:Destroy() end)
+            end
+        end
+    end
+end
+
+-- ── Kill críticos ──
+local function killCrit()
+    local hrp = HRP(); if not hrp then return end
+    local myPos = hrp.Position
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") and ENT_CRIT[obj.Name:lower()] then
+            local rp = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
+            if rp then pcall(function() obj:Destroy() end) end
+        end
+    end
+end
+
+-- ── God Mode ──
+local function godBeat()
+    th("god", 0.35, function()
+        local c = LP.Character; if not c then return end
+        if not c:FindFirstChildOfClass("ForceField") then
+            local ff = Instance.new("ForceField"); ff.Visible = false; ff.Parent = c
+        end
+        for _, pt in ipairs(c:GetDescendants()) do
+            if pt:IsA("BasePart") then pcall(function() pt.CanTouch = false end) end
+        end
+    end)
+end
+
+-- ── No-Clip ──
+local noclipOn = false
+local function noclipBeat()
+    if not noclipOn then return end
+    th("noclip", 0.08, function()
+        local c = LP.Character; if not c then return end
+        for _, pt in ipairs(c:GetDescendants()) do
+            if pt:IsA("BasePart") then pcall(function() pt.CanCollide = false end) end
+        end
+    end)
+end
+
+-- ── Zen Mode (destruir fruta prohibida + abrir puertas) ──
+local zenOn = false
+local function zenBeat()
+    if not zenOn then return end
+    th("zen", 0.6, function()
+        for _, room in ipairs(getRooms()) do
+            for _, d in ipairs(room.m:GetDescendants()) do
+                local nl = d.Name:lower()
+                if nl:find("fruit") or nl:find("forbidden") or nl == "sin_trigger" then
+                    pcall(function() d:Destroy() end)
+                end
+                if d:IsA("BasePart") and (nl:find("door") or nl:find("exit") or nl:find("gate")) then
+                    local pp = d:FindFirstChildOfClass("ProximityPrompt")
+                    if pp then fpp(pp) end
+                end
+            end
+        end
+    end)
+end
+
+-- ── Full Bright ──
+local function fbBeat()
+    th("fb", 1.2, function()
+        LIG.Brightness = 2.5; LIG.ClockTime = 14; LIG.FogEnd = 100000
+        LIG.GlobalShadows = false
+        LIG.OutdoorAmbient = Color3.fromRGB(140,140,140)
+        for _, v in ipairs(LIG:GetChildren()) do
+            if v:IsA("PostProcessEffect") or v:IsA("Atmosphere") then v.Enabled = false end
+        end
+    end)
+end
+
+-- ── Timer Freeze ──
+local function timerBeat()
+    th("timer", 0.3, function()
+        for _, n in ipairs({"DEATHTIMER","DeathTimer","Death_Timer","Timer","timer"}) do
+            local dt = workspace:FindFirstChild(n, true)
+            if dt and (dt:IsA("NumberValue") or dt:IsA("IntValue")) then
+                if dt.Value < 180 then dt.Value = 180 end
+            end
+        end
+    end)
+end
+
+-- ── Kill Aura ──
+local auraRange = 22
+local function auraBeat()
+    th("aura", 0.18, function()
+        local hrp = HRP(); if not hrp then return end
+        for _, m in ipairs(workspace:GetDescendants()) do
+            if m:IsA("Model") and m ~= LP.Character then
+                local h = m:FindFirstChildOfClass("Humanoid")
+                if h and h.Health > 0 then
+                    local rp = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("RootPart")
+                    if rp and (hrp.Position - rp.Position).Magnitude < auraRange then
+                        pcall(function() h.Health = 0 end)
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- ── ESP (ligero, solo TextLabel en BillboardGui) ──
+local espOn = false; local espBBs = {}
+local function clearESP()
+    for _, b in ipairs(espBBs) do pcall(function() if b and b.Parent then b:Destroy() end end) end
+    espBBs = {}
+end
+local function espBeat()
+    if not espOn then return end
+    th("esp", 1.0, function()
+        clearESP()
+        local hrp = HRP()
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("Model") and ENT_ALL[obj.Name:lower()] then
+                local rp = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
+                if rp then pcall(function()
+                    local isCrit = ENT_CRIT[obj.Name:lower()]
+                    local col = isCrit and Color3.fromRGB(255,35,35) or Color3.fromRGB(255,160,25)
+                    local bb = Instance.new("BillboardGui")
+                    bb.Adornee = rp; bb.Size = UDim2.new(0,100,0,28)
+                    bb.AlwaysOnTop = true; bb.Parent = rp
+                    local tl2 = Instance.new("TextLabel")
+                    tl2.Size = UDim2.new(1,0,1,0)
+                    tl2.BackgroundColor3 = col; tl2.BackgroundTransparency = 0.3
+                    tl2.Text = obj.Name; tl2.Font = Enum.Font.GothamBold
+                    tl2.TextSize = 9; tl2.TextColor3 = Color3.new(1,1,1); tl2.Parent = bb
+                    corner(4, tl2)
+                    if hrp then
+                        local dist = math.floor((hrp.Position - rp.Position).Magnitude)
+                        local dl = Instance.new("TextLabel")
+                        dl.Size = UDim2.new(1,0,0,10); dl.Position = UDim2.new(0,0,1,0)
+                        dl.BackgroundTransparency = 1; dl.Text = dist.."st"
+                        dl.Font = Enum.Font.Code; dl.TextSize = 7
+                        dl.TextColor3 = Color3.fromRGB(255,200,200); dl.Parent = bb
+                    end
+                    table.insert(espBBs, bb)
+                end) end
+            end
+        end
+    end)
+end
+
+-- ── Potato Mode (mobile + PC) ──
+local function potato()
+    local count = 0
+    for _, v in ipairs(game:GetDescendants()) do
+        if v:IsA("BasePart") then
+            pcall(function() v.Material = Enum.Material.SmoothPlastic; count=count+1 end)
+        elseif v:IsA("Decal") or v:IsA("Texture") then
+            pcall(function() v:Destroy(); count=count+1 end)
+        elseif v:IsA("PostProcessEffect") then
+            pcall(function() v.Enabled = false end)
+        elseif v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Beam") then
+            pcall(function() v.Enabled = false end)
+        elseif v:IsA("SpecialMesh") and v.MeshType == Enum.MeshType.FileMesh then
+            pcall(function() v.TextureId = "" end)
+        end
+    end
+    pcall(function() settings().Rendering.QualityLevel = 1 end)
+    notif("POTATO 🥔", "Gráficos minimum — FPS máximo ("..count.." objs)", C.grn, 4)
+end
+
+-- ── Auto-Bricks (abre puertas para ganar bricks) ──
+local function autoBricksBeat()
+    th("bricks", 0.4, function()
+        local hrp = HRP(); if not hrp then return end
+        for _, room in ipairs(getRooms()) do
+            for _, obj in ipairs(room.m:GetDescendants()) do
+                if obj:IsA("BasePart") and obj.Name:lower():find("door") then
+                    local pp = obj:FindFirstChildOfClass("ProximityPrompt")
+                    if pp then fpp(pp) end
+                end
+            end
+        end
+    end)
+end
+
+-- ── Goober Clicker Auto ──
+local gooberClickOn = false
+local function gooberAutoClick()
+    th("gclick", 0.05, function()
+        -- Busca el Goober Clicker en el PlayerGui o MenuGui
+        local function tryClick(parent)
+            if not parent then return end
+            for _, obj in ipairs(parent:GetDescendants()) do
+                if obj:IsA("TextButton") or obj:IsA("ImageButton") then
+                    local nl = obj.Name:lower()
+                    if nl:find("goober") or nl:find("clicker") or nl:find("click") then
+                        pcall(function() obj.MouseButton1Click:Fire() end)
+                    end
+                end
+            end
+        end
+        tryClick(LP.PlayerGui)
+        tryClick(LP:FindFirstChild("PlayerGui"))
+    end)
+end
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §17  REPRIEVE FARM V2
+--       Sin freeze · Batches adaptativos
+--       Compatible con todos los executors
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+local RF = {
+    bps     = 60,
+    iter    = 100000,
+    wait    = 2.5,
+    on      = false,
+    running = false,
+    first   = true,
+    cycles  = 0,
+    beacons = 0,
+    fires   = 0,
+    shames  = 0,
+}
+
+-- Destruir Shame automáticamente
+workspace.ChildAdded:Connect(function(c)
+    if c.Name == "SHAME" then
+        pcall(function() c:Destroy() end); RF.shames = RF.shames + 1
+    end
+end)
+
+-- Función principal de farm
+local function doFarm()
+    if RF.running then return end
+    RF.running = true
+    RF.first   = true
+
+    task.spawn(function()
+        -- Esperar TIMER GUI
+        local waited = 0
+        repeat task.wait(0.5); waited = waited + 0.5 until
+            (LP.PlayerGui:FindFirstChild("TIMER") or waited > 30)
+
+        local TG = LP.PlayerGui:FindFirstChild("TIMER")
+        if not TG then
+            notif("FARM ERROR", "TIMER GUI no encontrado.", C.red, 5)
+            RF.on = false; RF.running = false; return
+        end
+
+        local CH = TG:FindFirstChild("CHOICE")
+        local TM = CH and CH:FindFirstChild("TIME")
+        if not CH or not TM then
+            notif("FARM ERROR", "CHOICE/TIME no encontrado.", C.red, 5)
+            RF.on = false; RF.running = false; return
+        end
+
+        local BF = workspace:FindFirstChild("Beacons")
+        if not BF then
+            notif("FARM ERROR", "Beacons no encontrado. ¿Estás en modo REPRIEVE?", C.red, 5)
+            RF.on = false; RF.running = false; return
+        end
+
+        local char = LP.Character or LP.CharacterAdded:Wait()
+        local hrp  = char:WaitForChild("HumanoidRootPart", 30)
+        if not hrp then
+            notif("FARM ERROR", "HRP no encontrado.", C.red, 5)
+            RF.on = false; RF.running = false; return
+        end
+
+        LP.CharacterAdded:Connect(function(c)
+            char = c
+            hrp  = c:WaitForChild("HumanoidRootPart", 30)
+        end)
+
+        notif("REPRIEVE FARM", "Iniciado — recolectando beacons...", C.grn, 4)
+
+        -- ─── LOOP PRINCIPAL ───────────────────────
+        while RF.on do
+            task.wait(RF.wait)
+            if not RF.on then break end
+
+            -- 1. Recolectar beacons
+            local beaconList = BF:GetChildren()
+            for _, b in pairs(beaconList) do
+                if not RF.on then break end
+                if b:IsA("Part") then
+                    pcall(function()
+                        hrp.CFrame = b.CFrame
+                        fti(hrp, b, 0)
+                        fti(hrp, b, 1)
+                        RF.beacons = RF.beacons + 1
+                    end)
+                    task.wait(RF.first and 0.08 or (1/math.max(RF.bps, 1)))
+                end
+            end
+
+            if not RF.on then break end
+            task.wait(0.2)
+
+            -- 2. XP Fires en batches (sin freezear)
+            CH.Visible = true
+            GUI.SelectedObject = TM
+
+            local batchSize = isMobile and 200 or 500
+            local totalBatches = math.ceil(RF.iter / batchSize)
+            for b = 1, totalBatches do
+                if not RF.on then break end
+                for _ = 1, batchSize do
+                    if VIM then
+                        pcall(function()
+                            VIM:SendKeyEvent(true,  Enum.KeyCode.Return, false, game)
+                            VIM:SendKeyEvent(false, Enum.KeyCode.Return, false, game)
+                        end)
+                    else
+                        -- Fallback: fire input via UIS
+                        pcall(function()
+                            local fakeInput = {KeyCode=Enum.KeyCode.Return, UserInputType=Enum.UserInputType.Keyboard}
+                        end)
+                    end
+                    RF.fires = RF.fires + 1
+                end
+                task.wait(isMobile and 0.02 or 0.01)  -- micro-pausa anti-lag
+            end
+
+            GUI.SelectedObject = nil
+            RF.cycles = RF.cycles + 1
+
+            if RF.first then task.wait(1.2); RF.first = false
+            else task.wait(0.6) end
+        end
+        -- ─────────────────────────────────────────
+
+        RF.running = false
+        notif("REPRIEVE FARM", "Farm detenido. Ciclos: "..RF.cycles, C.org, 4)
+    end)
+end
+
+-- Hotkey E = toggle farm
+UIS.InputBegan:Connect(function(i, gp)
+    if gp then return end
+    if i.KeyCode == Enum.KeyCode.E then
+        if not RF.on then
+            RF.on = true
+            notif("FARM [E]", "Reprieve Farm activado!", C.grn, 3)
+            doFarm()
+        else
+            RF.on = false
+            notif("FARM [E]", "Reprieve Farm pausado.", C.org, 3)
+        end
+    end
+end)
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §18  TELEPORT
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+local wp = nil
+
+local function tpToName(names, label2)
+    local hrp = HRP(); if not hrp then notif("TP ERROR","Sin character.",C.red,3); return end
+    for _, n in ipairs(names) do
+        local f = workspace:FindFirstChild(n, true)
+        if f then
+            local cf = (f:IsA("BasePart") and f.CFrame)
+                    or (f.PrimaryPart and f.PrimaryPart.CFrame)
+            if cf then
+                hrp.CFrame = cf * CFrame.new(0,5,0)
+                notif("TELEPORT", "→ "..label2, C.grn, 3); return
+            end
+        end
+    end
+    notif("TP ERROR", label2.." no encontrado.", C.red, 3)
+end
+
+local function tpSafeRoom()
+    local hrp = HRP(); if not hrp then return end
+    -- Intentar saferoom / hatch
+    for _, n in ipairs({"SafeRoom","Safe Room","Saferoom","saferoom","Hatch","hatch","Escape"}) do
+        local f = workspace:FindFirstChild(n, true)
+        if f then
+            local cf = (f:IsA("BasePart") and f.CFrame) or (f.PrimaryPart and f.PrimaryPart.CFrame)
+            if cf then hrp.CFrame = cf * CFrame.new(0,5,0); notif("TP","→ SafeRoom",C.grn,3); return end
+        end
+    end
+    -- Última room, exit
+    local rms = getRooms()
+    if #rms > 0 then
+        local ex = rms[#rms].m:FindFirstChild("Exit",true)
+        if ex then
+            local cf = (ex:IsA("BasePart") and ex.CFrame) or (ex.PrimaryPart and ex.PrimaryPart.CFrame)
+            if cf then hrp.CFrame = cf * CFrame.new(0,5,0); notif("TP","→ Exit (última room)",C.org,3); return end
+        end
+    end
+    notif("TP ERROR","SafeRoom no encontrada en workspace.",C.red,4)
+end
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §19  CONECTAR HBS BASE
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+local _hbZen    = RS.Heartbeat:Connect(zenBeat)
+local _hbNoclip = RS.Heartbeat:Connect(noclipBeat)
+local _hbEsp    = RS.Heartbeat:Connect(espBeat)
+local _hbGoober = RS.Heartbeat:Connect(function()
+    if gooberClickOn then gooberAutoClick() end
+end)
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §20  CONTENIDO TABS
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+-- ═══════ TAB 1 — AUTO FARM ═══════════
+sec(P[1],"Zen Mode — Modo Pacífico",C.grn)
+info(P[1],"Destruye fruta prohibida, abre puertas. Solo en modo ZEN.")
+tog(P[1],"Zen Auto (scan 0.6s)",false,function(v)
+    zenOn = v
+    notif("ZEN", v and "Zen activo — Sin no aparecerá." or "Zen desactivado.", v and C.grn or C.org, 3)
+end)
+sec(P[1],"Auto Levers / Switches / Plugs")
+tog(P[1],"Auto-activar levers, switches y plugs",false,function(v)
+    if v then hOn("lvr",function() th("lvr",1,function()
+        for _, room in ipairs(getRooms()) do
+            for _, d in ipairs(room.m:GetDescendants()) do
+                local nl = d.Name:lower()
+                if d:IsA("BasePart") and (nl:find("lever") or nl:find("plug") or nl:find("switch") or nl:find("crank")) then
+                    local pp = d:FindFirstChildOfClass("ProximityPrompt"); if pp then fpp(pp) end
+                end
+            end
+        end
+    end) end); notif("LEVERS","Auto-Levers activo.",C.acc2,3)
+    else hOff("lvr") end
+end)
+sec(P[1],"Auto Bricks (abre puertas)")
+info(P[1],"Grindea bricks automáticamente — abre puertas del mapa.")
+info(P[1],"Bricks sirven para comprar items en la Shop.")
+tog(P[1],"Auto-Bricks (scan 0.4s)",false,function(v)
+    if v then hOn("bricks",autoBricksBeat); notif("BRICKS","Auto-Bricks activo.",C.grn,3)
+    else hOff("bricks") end
+end)
+sec(P[1],"Auto Safe Room",C.grn)
+tog(P[1],"Auto TP al exit de la última room",false,function(v)
+    if v then hOn("safe",function() th("safe",0.6,function()
+        local hrp = HRP(); if not hrp then return end
+        local rm = getRooms(); if #rm == 0 then return end
+        local ex = rm[#rm].m:FindFirstChild("Exit",true)
+        if ex then
+            local cf = (ex:IsA("BasePart") and ex.CFrame) or (ex.PrimaryPart and ex.PrimaryPart.CFrame)
+            if cf then hrp.CFrame = cf * CFrame.new(0,4,0) end
+        end
+    end) end); notif("SAFE","Auto SafeRoom activo.",C.grn,3)
+    else hOff("safe") end
+end)
+sec(P[1],"Bypass Remotes")
+info(P[1],"Destruye RemoteEvents Kill/Send/Damage del ReplicatedStorage.")
+tog(P[1],"Destruir remotes peligrosos (0.5s)",false,function(v)
+    if v then hOn("farm",function() th("farm",0.5,function()
+        local c = LP.Character; if not c then return end
+        for _, o in ipairs(REP:GetDescendants()) do
+            if o:IsA("RemoteEvent") or o:IsA("RemoteFunction") then
+                local nl = o.Name:lower()
+                if nl:find("kill") or nl:find("damage") or nl:find("death") or nl:find("send") then
+                    pcall(function() o:Destroy() end)
+                end
+            end
+        end
+    end) end); notif("BYPASS","Remotes destruidos.",C.grn,3)
+    else hOff("farm") end
+end)
+
+-- ═══════ TAB 2 — REPRIEVE ════════════
+sec(P[2],"Reprieve Auto Farm V2",C.grn)
+info(P[2],"Solo funciona en modo REPRIEVE del lobby.")
+info(P[2],"Objetivo: recolectar beacons negros + acumular XP.")
+info(P[2],"Batches adaptativos — no freezea en mobile ni en PC.")
+info(P[2],"Toggle: botones abajo O tecla [E] en cualquier momento.")
+sld(P[2],"Velocidad de beacons",10,120,60," bps",function(v) RF.bps = v end)
+sld(P[2],"Iteraciones de XP",10000,200000,100000,"",function(v) RF.iter = v end)
+sld(P[2],"Espera entre ciclos",1,8,2," s",function(v) RF.wait = v end)
+btn(P[2],"▶  INICIAR FARM",C.grn,function()
+    if not RF.on then RF.on = true; doFarm()
+    else notif("FARM","Ya está corriendo. Usa [E] para pausar.",C.org,3) end
+end)
+btn(P[2],"⏸  PAUSAR FARM",C.org,function()
+    RF.on = false; notif("FARM","Farm pausado.",C.org,3)
+end)
+btn(P[2],"📊  Ver stats → F9 Output",C.acc2,function()
+    print("╔══ ROSHAN HUB V2 — REPRIEVE STATS ══╗")
+    print("  Ciclos:  "..RF.cycles)
+    print("  Beacons: "..RF.beacons)
+    print("  XP Fires:"..RF.fires)
+    print("  Shames:  "..RF.shames)
+    print("╚════════════════════════════════════╝")
+    notif("STATS","C:"..RF.cycles.." B:"..RF.beacons.." F:"..RF.fires,C.acc2,5)
+end)
+btn(P[2],"🔄  Reset stats",C.dim,function()
+    RF.cycles=0; RF.beacons=0; RF.fires=0; RF.shames=0
+    notif("STATS","Stats reseteados.",C.dim,3)
+end)
+sec(P[2],"Auto Parry Shame",C.red)
+info(P[2],"Shame aparece si no recolectás beacons a tiempo.")
+info(P[2],"El script la destruye automáticamente al spawnear.")
+info(P[2],"workspace.ChildAdded listener activo siempre.")
+tog(P[2],"Kill Shame extra (scan activo)",false,function(v)
+    if v then hOn("shame",function() th("shame",0.3,function()
+        for _, obj in ipairs(workspace:GetChildren()) do
+            if obj.Name == "SHAME" or obj.Name == "Shame" then
+                pcall(function() obj:Destroy() end)
+            end
+        end
+    end) end); notif("SHAME","Anti-Shame activo.",C.red,3)
+    else hOff("shame") end
+end)
+
+-- ═══════ TAB 3 — WOED / GOOBER ═══════
+sec(P[3],"¿Qué son los Goobers?",C.yel)
+info(P[3],"Goobers = criaturas amigables tipo doodle de cuaderno.")
+info(P[3],"En WOED elegís hasta 3 Goobers como BUFFS para Domains.")
+info(P[3],"Cada Domain completado = 1 Goober extra disponible.")
+info(P[3],"Si morís en un Domain, se resetean todos los Goobers.")
+sec(P[3],"Buffs de Goobers en WOED",C.yel)
+info(P[3],"• Hoob — velocidad extra de movimiento")
+info(P[3],"• Coob — reduce daño recibido")
+info(P[3],"• Loob — más tiempo en el timer")
+info(P[3],"• Goobers ÚNICOS (bold en wiki): se pueden tomar 1 sola vez")
+info(P[3],"• Michael — el único bueno para TODOS los domains")
+sec(P[3],"Goober Clicker Auto",C.yel)
+info(P[3],"Auto-clickea el Goober en el minijuego Goober Clicker.")
+info(P[3],"Rebirth = reset goobers + 5% más goobers por click.")
+info(P[3],"Primera rebirth: 30.000G. Aumenta 30k por cada rebirth.")
+tog(P[3],"Auto Goober Clicker (click 20/s)",false,function(v)
+    gooberClickOn = v
+    notif("GOOBER",v and "Auto-click activo (20/s)." or "Auto-click off.",v and C.yel or C.org,3)
+end)
+btn(P[3],"🐾  Spawn Goobers en pantalla",C.yel,function()
+    -- Dispara el evento para hacer aparecer goobers decorativos
+    task.spawn(function()
+        for _, gui in ipairs(LP.PlayerGui:GetDescendants()) do
+            if gui:IsA("TextButton") or gui:IsA("ImageButton") then
+                local nl = gui.Name:lower()
+                if nl:find("goober") then pcall(function() gui.MouseButton1Click:Fire() end) end
+            end
+        end
+    end)
+    notif("GOOBERS","Intentando spawnear goobers en pantalla...",C.yel,3)
+end)
+sec(P[3],"Goober Race (apostar)",C.yel)
+info(P[3],"En el Lobby hay una Goober Race — apostá a Hoob, Coob o Loob.")
+info(P[3],"1er lugar = máximo multiplicador de bricks.")
+info(P[3],"Auto-bet está en desarrollo (depende del GUI name del juego).")
+btn(P[3],"💰  Auto-bet Goober Race (intento)",C.yel,function()
+    task.spawn(function()
+        for _, gui in ipairs(LP.PlayerGui:GetDescendants()) do
+            if gui:IsA("TextButton") then
+                local nl = gui.Name:lower()
+                if nl:find("bet") or nl:find("hoob") or nl:find("race") then
+                    pcall(function() gui.MouseButton1Click:Fire() end)
+                end
+            end
+        end
+    end)
+    notif("GOOBER RACE","Intentando auto-bet...",C.yel,3)
+end)
+
+-- ═══════ TAB 4 — DEFENSA ═════════════
+sec(P[4],"Obliterador General (40+ entidades)",C.red)
+info(P[4],"Carnation · Slight · Slugfish · Heed · Elkman · Sorrow · Dozer · Goatman · Litany · Doppel · Doombringer · Joey · Kookoo · Rue · Drain · Mime · Ire · Zomber · Ambush · Clef · Screech · Covet · Craven · Stem · Guille · Fool · Tragedy · Flowerhead · Snap · S.N.A.P · Seesay · Big One · Chaos · Clot · Sin · Shame · Tainted Soil")
+tog(P[4],"Matar TODAS las entidades — proximity "..killRange.."st",false,function(v)
+    if v then hOn("kall",function() th("kall",0.45,killNear) end)
+        notif("OBLIT","Todas las entidades en rango serán eliminadas.",C.red,4)
+    else hOff("kall") end
+end)
+tog(P[4],"Solo entidades CRÍTICAS (instakill / raras)",false,function(v)
+    if v then hOn("kcrit",function() th("kcrit",0.3,killCrit) end)
+        notif("CRITICAS","Anti-instakill activo.",C.red,4)
+    else hOff("kcrit") end
+end)
+sld(P[4],"Rango kill aura",15,150,80," st",function(v) killRange = v end)
+
+sec(P[4],"Entidades SOB 2026 (individuales)",C.org)
+local function addKill(pg, n, names, key)
+    tog(pg,"Anti-"..n,false,function(v)
+        if v then
+            hOn(key,function() th(key,0.4,function() killByNames(names) end) end)
+            notif("ANTI-"..n:upper(),"Activo.",C.org,3)
+        else hOff(key) end
+    end)
+end
+addKill(P[4],"Covet",{"Covet","covet"},"covet")
+addKill(P[4],"Craven (snap 12s)",{"Craven","craven"},"craven")
+addKill(P[4],"Stem (Domain Carnation)",{"Stem","stem"},"stem")
+addKill(P[4],"Guille (horda Litany)",{"Guille","guille"},"guille")
+addKill(P[4],"Fool",{"Fool","fool"},"fool")
+addKill(P[4],"Tragedy (Domain Sorrow)",{"Tragedy","tragedy"},"tragedy")
+addKill(P[4],"Flowerhead",{"Flowerhead","Flower Head","flowerhead"},"fh")
+addKill(P[4],"S.N.A.P",{"Snap","S.N.A.P","SNAP","snap"},"snap_k")
+addKill(P[4],"Seesay",{"Seesay","seesay"},"seesay")
+addKill(P[4],"Clot (Domain Reprieve)",{"Clot","clot"},"clot")
+addKill(P[4],"Tainted Soil",{"Tainted Soil","TaintedSoil","tainted soil"},"ts")
+addKill(P[4],"Sorrow + Elkman",{"Sorrow","sorrow","Elkman","elkman"},"se_k")
+addKill(P[4],"Litany + Goatman",{"Litany","litany","Goatman","goatman"},"lg_k")
+
+sec(P[4],"Supervivencia",C.grn)
+tog(P[4],"Freeze DeathTimer (→ 180s)",false,function(v)
+    if v then hOn("timer",timerBeat); notif("TIMER","Timer congelado en 180s.",C.grn,3) else hOff("timer") end
+end)
+tog(P[4],"God Mode (ForceField + CanTouch=false)",false,function(v)
+    if v then hOn("god",godBeat); notif("GOD","God Mode activo.",C.grn,4)
+    else hOff("god")
+        local c = LP.Character; if c then
+            for _, ff in ipairs(c:GetChildren()) do
+                if ff:IsA("ForceField") then pcall(function() ff:Destroy() end) end
+            end
+            for _, pt in ipairs(c:GetDescendants()) do
+                if pt:IsA("BasePart") then pcall(function() pt.CanTouch = true end) end
+            end
+        end
+    end
+end)
+tog(P[4],"No-Clip",false,function(v)
+    noclipOn = v
+    if not v then
+        local c = LP.Character; if c then
+            for _, pt in ipairs(c:GetDescendants()) do
+                if pt:IsA("BasePart") then pcall(function() pt.CanCollide = true end) end
+            end
+        end
+    end
+    notif("NOCLIP", v and "No-Clip activo." or "No-Clip off.", v and C.grn or C.org, 3)
+end)
+
+-- ═══════ TAB 5 — VISUAL ══════════════
+sec(P[5],"Iluminación",C.acc2)
+tog(P[5],"Full Bright",false,function(v)
+    if v then hOn("fb",fbBeat); notif("LIGHT","Full Bright activo.",C.acc2,3)
+    else hOff("fb")
+        LIG.Brightness=1; LIG.ClockTime=0; LIG.FogEnd=1000; LIG.GlobalShadows=true
+        for _, v2 in ipairs(LIG:GetChildren()) do
+            if v2:IsA("PostProcessEffect") or v2:IsA("Atmosphere") then v2.Enabled=true end
+        end
+    end
+end)
+btn(P[5],"🥔  Potato Boost (max FPS)",C.org,potato)
+sec(P[5],"Kill Aura",C.red)
+sld(P[5],"Rango Kill Aura",5,80,22," st",function(v) auraRange = v end)
+tog(P[5],"Kill Aura (scan 0.18s)",false,function(v)
+    if v then hOn("aura",auraBeat); notif("AURA","Kill Aura activo.",C.red,3) else hOff("aura") end
+end)
+sec(P[5],"ESP",C.acc2)
+tog(P[5],"Entity ESP (billboards + distancia, 1s)",false,function(v)
+    espOn = v; if not v then clearESP() end
+    notif("ESP",v and "ESP activo." or "ESP off.",v and C.acc2 or C.org,3)
+end)
+sec(P[5],"Velocidad",C.acc)
+sld(P[5],"WalkSpeed",16,300,16," sp",function(v)
+    local h = HUM(); if h then pcall(function() h.WalkSpeed = v end) end
+end)
+sld(P[5],"JumpPower",50,350,50," jp",function(v)
+    local h = HUM(); if h then pcall(function() h.JumpPower = v end) end
+end)
+
+-- ═══════ TAB 6 — TELEPORT ════════════
+sec(P[6],"SafeRoom / Hatch / Exit",C.grn)
+btn(P[6],"🚪  TP a SafeRoom / Hatch",C.grn,tpSafeRoom)
+sec(P[6],"Waypoints",C.acc2)
+btn(P[6],"💾  Guardar posición actual",C.acc2,function()
+    local hrp = HRP()
+    if hrp then wp = hrp.CFrame; notif("WAYPOINT","Posición guardada.",C.grn,3)
+    else notif("WP ERROR","Sin character.",C.red,3) end
+end)
+btn(P[6],"📍  Ir al waypoint guardado",C.grn,function()
+    local hrp = HRP()
+    if hrp and wp then hrp.CFrame = wp; notif("WAYPOINT","Teleportado al WP.",C.grn,3)
+    else notif("WAYPOINT","Sin waypoint guardado.",C.red,3) end
+end)
+sec(P[6],"Domains (SOB 2026)",C.acc)
+info(P[6],"Carnation / Sorrow / Litany — accesibles desde room 5.")
+btn(P[6],"TP Domain Sorrow",C.acc,function()
+    tpToName({"Clot","SorrowDomain","SorrowDom","Sorrow Domain"},"Sorrow Domain")
+end)
+btn(P[6],"TP Domain Carnation",C.acc,function()
+    tpToName({"Nede","CarnationDomain","CarnationDom","Carnation Domain"},"Carnation Domain")
+end)
+btn(P[6],"TP Domain Litany",C.acc,function()
+    tpToName({"Sinrow","LitanyDomain","LitanyDom","Litany Domain"},"Litany Domain")
+end)
+sec(P[6],"WOED / Lobby",C.yel)
+info(P[6],"WOED = Domains en sucesión con Goobers como buffs.")
+info(P[6],"Accedé al lobby cannon para entrar sin requisito de nivel.")
+btn(P[6],"TP al Lobby Cannon",C.yel,function()
+    tpToName({"Cannon","cannon","LobbyCanon","lobby_cannon"},"Lobby Cannon")
+end)
+btn(P[6],"TP al Crown Area (WOED)",C.yel,function()
+    tpToName({"Crown","CrownArea","crown","Woed","WOED"},"Crown/WOED Area")
+end)
+sec(P[6],"Rejoin / Reset",C.red)
+btn(P[6],"🔄  Rejoin servidor",C.red,function()
+    pcall(function() TS:Teleport(game.PlaceId, LP) end)
+end)
+btn(P[6],"💀  Reset Character",C.red,function()
+    local h = HUM(); if h then pcall(function() h.Health = 0 end) end
+end)
+
+-- ═══════ TAB 7 — TRAITS / ITEMS ══════
+sec(P[7],"Traits — Sistema SOB",C.yel)
+info(P[7],"Traits se obtienen con Trait Charms (cada 30 levels).")
+info(P[7],"1 Charm usado = 2 traits desbloqueados aleatoriamente.")
+info(P[7],"Total en juego: 38 Trait Charms → 570 levels para todos.")
+sec(P[7],"Tipos de Traits")
+info(P[7],"• REGULAR — buffs/debuffs generales de gameplay")
+info(P[7],"• BOUND — invocan una entidad específica constantemente")
+info(P[7],"• OMNI (SOB) — slots extra; 1 slot adicional cada 50 lvls")
+info(P[7],"• SHIFT (SOB) — reemplaza entidad base por versión más fácil")
+sec(P[7],"Traits Recomendados")
+info(P[7],"✦ Rosary Ring — 1 buff sin debuff (el mejor para empezar)")
+info(P[7],"✦ Domehead — 1 buff + 1 debuff (bueno con práctica)")
+info(P[7],"✦ 10-Point Crampons — slide bounce + METEOR effect")
+info(P[7],"✦ Cog → Terlesis — Kookoo con timer reducido")
+info(P[7],"✦ Goober Cookie — hace aparecer Goobers en pantalla")
+info(P[7],"✦ Steel-Toed — ref. TF2 Soldier (suena su risa al equipar)")
+sec(P[7],"Item Skins (Skin Can)",C.acc2)
+info(P[7],"Skin Cans se compran en la Shop con Bricks/Keys.")
+info(P[7],"Skin Can da una skin aleatoria para un item que tenés.")
+info(P[7],"• SNAP Snapcat skin: lo hace ronronear como un gato")
+info(P[7],"• S.H.A.K.E A.W.O.O.G.A skin — Wearable Outstanding Ocular Gawking Apparatus")
+info(P[7],"• Doombringer tiene skins doradas (Golden) — Midasdam badge")
+sec(P[7],"Keys Amarillas (Cosmetic Locks)",C.yel)
+info(P[7],"Keys se obtienen cada 3 levels. 1ra key: cada 2 levels.")
+info(P[7],"Abrir un cosmetic lock = 20 bricks de bonus.")
+info(P[7],"Keys desbloquean: soundtracks, timers, animation packs.")
+info(P[7],"Anims disponibles: Goober, Crouching, Stickbug, Snek,")
+info(P[7],"  Sliding, Drift King, Belly Slide, Flamboyant.")
+info(P[7],"Keys se pueden comprar con Robux (1 key = 85 R$).")
+sec(P[7],"Items Nuevos SOB 2026",C.grn)
+info(P[7],"• Lamp — esfera brillante, ilumina el camino")
+info(P[7],"• Sinth Sense Charm — nuevo charm de encanto")
+info(P[7],"• S.H.A.K.E — parry/counter de entidades + speed buff")
+info(P[7],"• B.R.I.C.K — se lanza, rompe puertas, mata Slight/Heed/Elkman")
+info(P[7],"• Doombringer — companion-item, da speed buff cuando te defiende")
+info(P[7],"• S.N.A.P — companion comprable en shop (10011 bricks)")
+info(P[7],"• Gun (GUN) — laser sight + silenciador, 12 municiones, speed buff al disparar esfera")
+btn(P[7],"🔑  Auto-Abrir Cosmetic Locks",C.yel,function()
+    task.spawn(function()
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("BasePart") then
+                local nl = obj.Name:lower()
+                if nl:find("lock") or nl:find("key") or nl:find("chest") then
+                    local pp = obj:FindFirstChildOfClass("ProximityPrompt")
+                    if pp then fpp(pp) end
+                end
+            end
+        end
+        for _, gui in ipairs(LP.PlayerGui:GetDescendants()) do
+            if gui:IsA("TextButton") and gui.Name:lower():find("unlock") then
+                pcall(function() gui.MouseButton1Click:Fire() end)
+            end
+        end
+    end)
+    notif("KEYS","Intentando abrir cosmetic locks...",C.yel,4)
+end)
+
+-- ═══════ TAB 8 — EXTRA ════════════════
+sec(P[8],"Badges & Doodles",C.acc)
+btn(P[8],"🏆  Get ALL Badges (V4)",C.acc,function()
+    notif("BADGES","Ejecutando Badge Injector V4...",C.acc,4)
+    task.spawn(function()
+        local ok, err = pcall(function()
+            loadstring(game:HttpGet(
+                "https://raw.githubusercontent.com/ROSHANDVS2/ROSHAN-HUB-SCRIPTS/refs/heads/main/GRACE%20BADGE%20INJECTOR%20V4"
+            ))()
+        end)
+        if ok then notif("BADGES OK","✓ Badges completados!",C.grn,6)
+        else notif("BADGES ERR",tostring(err):sub(1,60),C.red,6) end
+    end)
+end)
+btn(P[8],"🎨  Unlock ALL Doodles",C.acc,function()
+    notif("DOODLES","Ejecutando Doodles Unlocker...",C.acc,4)
+    task.spawn(function()
+        local ok, err = pcall(function()
+            loadstring(game:HttpGet(
+                "https://raw.githubusercontent.com/ROSHANDVS2/ROSHAN-HUB-SCRIPTS/refs/heads/main/GRACE%20DOODLES%20UNLOCKER.lua"
+            ))()
+        end)
+        if ok then notif("DOODLES OK","✓ Doodles desbloqueados!",C.grn,6)
+        else notif("DOODLES ERR",tostring(err):sub(1,60),C.red,6) end
+    end)
+end)
+sec(P[8],"Debug",C.dim)
+btn(P[8],"📋  Listar Remotes → F9",C.dim,function()
+    local t = {}; for _, v in ipairs(REP:GetDescendants()) do
+        if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then table.insert(t, v:GetFullName()) end
+    end
+    print("=== REMOTES ("..#t..") ===")
+    for _, n in ipairs(t) do print("  ->", n) end
+    notif("DEBUG",#t.." remotes listados. Ver F9.",C.dim,4)
+end)
+btn(P[8],"👾  Listar Entidades activas",C.dim,function()
+    local found = {}
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") and ENT_ALL[obj.Name:lower()] then table.insert(found, obj.Name) end
+    end
+    print("=== ENTIDADES ("..#found..") ===")
+    for _, e in ipairs(found) do print("  !", e) end
+    notif("DEBUG",#found.." entidades activas. Ver F9.",C.dim,4)
+end)
+btn(P[8],"🗑️  Destruir partículas/efectos (FPS)",C.org,function()
+    local count = 0
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Beam") or v:IsA("Fire") or v:IsA("Sparkles") then
+            pcall(function() v.Enabled = false; count = count+1 end)
+        end
+    end
+    notif("FPS BOOST",count.." partículas desactivadas.",C.org,4)
+end)
+sec(P[8],"Créditos",C.dim)
+info(P[8],"ROSHAN HUB V2.0 — GRACE ELITE",C.acc)
+info(P[8],"Dev: ROSHAN_DEV  ·  Co-Dev: AANN_DEV")
+info(P[8],"Sin Rayfield. Sin dependencias externas.")
+info(P[8],"Mobile-optimized. Lag minimizado.")
+info(P[8],"[H] = Abrir/cerrar   [E] = Toggle Reprieve Farm")
+info(P[8],"© 2026 ROSHAN_DEV & AANN_DEV — All Rights Reserved")
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §21  ACTIVAR PRIMERA TAB
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+tabBtns[1].btn.MouseButton1Click:Fire()
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §22  FUNCIÓN DE CLEANUP TOTAL
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_G.__ROSH_V2_KILL = function()
+    -- Detener farm y flags
+    RF.on = false; RF.running = false
+    zenOn = false; noclipOn = false; espOn = false; gooberClickOn = false
+
+    -- Desconectar todos los HBs
+    for k in pairs(HB) do hOff(k) end
+
+    -- Desconectar HBs base
+    pcall(function() _hbZen:Disconnect()    end)
+    pcall(function() _hbNoclip:Disconnect() end)
+    pcall(function() _hbEsp:Disconnect()    end)
+    pcall(function() _hbGoober:Disconnect() end)
+
+    -- Limpiar ESP
+    clearESP()
+
+    -- Restaurar físicas del character
+    local c = LP.Character
+    if c then
+        for _, pt in ipairs(c:GetDescendants()) do
+            if pt:IsA("BasePart") then
+                pcall(function() pt.CanCollide = true; pt.CanTouch = true end)
+            end
+        end
+        for _, ff in ipairs(c:GetChildren()) do
+            if ff:IsA("ForceField") then pcall(function() ff:Destroy() end) end
+        end
+    end
+
+    -- Restaurar lighting
+    pcall(function()
+        LIG.Brightness = 1; LIG.ClockTime = 0
+        LIG.FogEnd = 1000; LIG.GlobalShadows = true
+    end)
+
+    -- Destruir GUI
+    pcall(function() SG:Destroy() end)
+end
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--  §23  NOTIFICACIÓN DE BIENVENIDA
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+task.wait(0.3)
+local modeStr = isMobile and "📱 MOBILE" or "🖥️ PC"
+notif("ROSHAN HUB V2 ✝", modeStr.." · [H] Hub  [E] Farm © ROSHAN_DEV", C.acc, 7)
